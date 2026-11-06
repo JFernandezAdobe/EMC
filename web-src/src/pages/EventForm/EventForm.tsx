@@ -567,13 +567,15 @@ const EventFormInner: React.FC<EventFormInnerProps> = ({ ims: _ims }) => {
     loadSeriesCustomTagsUrl,
   ])
 
+  const { resetFromServer: resetPageMetadata } = pageMetadata
   const reloadAfterGroupChange = useCallback(async () => {
     if (eventIdParam) {
       await loadEvent(eventIdParam)
+      await resetPageMetadata()
     } else {
       loadFromStorage()
     }
-  }, [eventIdParam, loadEvent, loadFromStorage])
+  }, [eventIdParam, loadEvent, loadFromStorage, resetPageMetadata])
 
   useEffect(() => {
     if (eventIdParam) {

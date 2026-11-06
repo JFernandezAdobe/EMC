@@ -9,7 +9,6 @@ import { TYPOGRAPHY, COLORS } from '../../styles/designSystem'
 import { useEventFormContext } from '../../contexts/EventFormContext'
 import { useEventFormComponent } from '../../hooks/useEventFormComponent'
 import { apiService, cachedApi } from '../../services/api'
-import { apiCache } from '../../services/cacheUtils'
 import { PublishingProfile } from '../../types/domain'
 
 interface MetadataField {
@@ -62,7 +61,7 @@ function publishingProfileFromAssociation(profileAssociation: {
  * via the PublishingProfile API. No-ops while `enabled` is false.
  */
 export function usePageMetadata(enabled: boolean) {
-  const { isEditMode } = useEventFormContext()
+  const { isEditMode, populateFormDataFromResponse } = useEventFormContext()
   const enabledRef = useRef(enabled)
   enabledRef.current = enabled
 
@@ -145,27 +144,6 @@ export function usePageMetadata(enabled: boolean) {
     eventId,
   } = useEventFormComponent({
     componentId: 'page-metadata',
-    onLoadResponse: async (eventResponse: any) => {
-      // Load the event's publishing profile when event data is loaded
-      if (!eventResponse?.eventId) return
-      
-      try {
-        const profileResponse = await cachedApi.getEventPublishingProfile(eventResponse.eventId, { skipStaleGroupRecovery: true })
-        
-        // Response could be an array or single object
-        const profiles = Array.isArray(profileResponse) ? profileResponse : [profileResponse]
-        const profileAssociation = profiles[0]
-        
-        if (profileAssociation && !('error' in profileAssociation)) {
-          applyPublishingProfileFromServer(
-            publishingProfileFromAssociation(profileAssociation as { profile?: PublishingProfile; profileId?: string })
-          )
-        }
-      } catch (err) {
-        console.error('Failed to load publishing profile:', err)
-        // Non-fatal - profile may not exist yet
-      }
-    },
     onAfterSave: async (eventId: string) => {
       if (!enabledRef.current) return
       // Save/update the publishing profile after the event is saved
@@ -192,7 +170,6 @@ export function usePageMetadata(enabled: boolean) {
             !('error' in updateResult) &&
             (updateResult as PublishingProfile).profileId
           ) {
-            apiCache.invalidate('getEventPublishingProfile')
             publishingProfileRef.current = {
               ...existingProfile,
               ...(updateResult as PublishingProfile),
@@ -209,8 +186,6 @@ export function usePageMetadata(enabled: boolean) {
           if (createResult && !('error' in createResult) && createResult.profileId) {
             // Assign the new profile to the event
             await apiService.assignPublishingProfileToEvent(eventId, createResult.profileId)
-            // Drop the cached "no profile" lookup so a later reload finds this profile
-            apiCache.invalidate('getEventPublishingProfile')
             publishingProfileRef.current = createResult as PublishingProfile
             syncAcknowledgmentsAfterProfileSave()
           }
@@ -305,6 +280,15 @@ export function usePageMetadata(enabled: boolean) {
     }
   }, [enabled, isEditMode, eventId, loadPublishingProfile])
 
+  /** Drop unsaved metadata and re-hydrate from the server (e.g. Discard on group switch). */
+  const resetFromServer = useCallback(async () => {
+    publishingProfileRef.current = null
+    setPendingProfileAckBackfill(false)
+    if (!enabledRef.current || !isEditMode || !eventId) return
+    populateFormDataFromResponse({ metadata: {}, metadataFieldAcknowledged: {} })
+    await loadPublishingProfile(eventId)
+  }, [isEditMode, eventId, populateFormDataFromResponse, loadPublishingProfile])
+
   // ============================================================================
   // DATA LOADING (Catalogue)
   // ============================================================================
@@ -373,6 +357,7 @@ export function usePageMetadata(enabled: boolean) {
     metadata,
     metadataFieldAcknowledged,
     handleFieldChange,
+    resetFromServer,
   }
 }
 
